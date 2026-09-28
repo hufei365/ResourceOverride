@@ -164,6 +164,47 @@ export const toggleFade = (el, opts = {}) => {
     }
 };
 
+// Shows the blocking loading overlay. Resolves once the browser has actually
+// painted it, so callers can await this before doing work that blocks the main
+// thread - otherwise the overlay would never get a frame to appear in.
+export const showLoading = (message) => {
+    const overlay = document.getElementById("loadingOverlay");
+    if (!overlay) {
+        return Promise.resolve();
+    }
+    const loadingText = document.getElementById("loadingText");
+    if (loadingText && message) {
+        loadingText.textContent = message;
+    }
+    overlay.classList.add("visible");
+    // Wait for a frame to have been rendered, then yield to a macrotask so the
+    // paint is guaranteed to be on screen before the caller blocks the thread.
+    // The timeout is a fallback for hidden tabs, where rAF never fires.
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (!done) {
+                done = true;
+                resolve();
+            }
+        };
+        const afterPaint = () => setTimeout(finish, 0);
+        if (typeof requestAnimationFrame === "function") {
+            requestAnimationFrame(() => requestAnimationFrame(afterPaint));
+            setTimeout(finish, 60);
+        } else {
+            setTimeout(finish, 0);
+        }
+    });
+};
+
+export const hideLoading = () => {
+    const overlay = document.getElementById("loadingOverlay");
+    if (overlay) {
+        overlay.classList.remove("visible");
+    }
+};
+
 export const showToast = (message) => {
     const generalToast = document.querySelector("#generalToast");
     generalToast.innerHTML = message;

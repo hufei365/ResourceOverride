@@ -575,3 +575,48 @@ div, span {
     border-bottom: 1px solid #aaa;
     margin-bottom: 5px;
 }
+
+#loadingOverlay {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 300;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.65);
+}
+
+/* Shown with display, not a transition. A transition needs frames to run, and
+   the very work this overlay covers is what blocks those frames - so animating
+   it here meant it never became visible at all. */
+#loadingOverlay.visible {
+    display: flex;
+}
+
+.loadingBox {
+    padding: 18px 26px;
+    background: #ffffff;
+    border: 2px solid #999999;
+    border-radius: 5px;
+    font-size: 14px;
+    text-align: center;
+}
+
+.spinner {
+    width: 24px;
+    height: 24px;
+    margin: 0 auto 10px auto;
+    border: 3px solid #dddddd;
+    border-top-color: #666666;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

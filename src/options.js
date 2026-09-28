@@ -3,6 +3,8 @@ import { clearAllRuleData } from "./clearAll.js";
 import {
     getUiElements,
     showToast,
+    showLoading,
+    hideLoading,
 } from "./util.js";
 
 /* global chrome */
@@ -74,11 +76,16 @@ const initOptions = (onRulesChanged) => {
             return;
         }
         resetClearLink();
-        const removedKeys = await clearAllRuleData();
-        if (onRulesChanged) {
-            await onRulesChanged();
+        await showLoading("Clearing rules...");
+        try {
+            const removedKeys = await clearAllRuleData();
+            if (onRulesChanged) {
+                await onRulesChanged();
+            }
+            showToast(removedKeys.length ? "All rules cleared." : "Nothing to clear.");
+        } finally {
+            hideLoading();
         }
-        showToast(removedKeys.length ? "All rules cleared." : "Nothing to clear.");
     });
 
     ui.clearAllLink.addEventListener("mouseout", resetClearLink);
@@ -96,9 +103,16 @@ const initOptions = (onRulesChanged) => {
             }
             // "data" is the historical key; older v1 exports also used it.
             const importedData = importedObj.data !== undefined ? importedObj.data : importedObj.ruleGroups;
-            const imported = await importData(importedData, importedObj.v);
-            if (imported && onRulesChanged) {
-                await onRulesChanged();
+            // Awaiting showLoading lets the overlay paint before the heavy work below
+            // starts blocking the main thread.
+            await showLoading("Loading rules...");
+            try {
+                const imported = await importData(importedData, importedObj.v);
+                if (imported && onRulesChanged) {
+                    await onRulesChanged();
+                }
+            } finally {
+                hideLoading();
             }
         };
         reader.readAsText(ui.loadRulesInput.files[0]);
