@@ -6,6 +6,6 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "test": "node test/globMatchToDNRRegexTest.js && node test/importExportTest.js && node test/netRequestRulesTest.js"
+    "test": "node test/globMatchToDNRRegexTest.js && node test/importExportTest.js && node test/clearAllTest.js && node test/netRequestRulesTest.js"
   }
 }

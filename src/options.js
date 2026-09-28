@@ -1,4 +1,5 @@
 import { exportData, importData } from "./importExport.js";
+import { clearAllRuleData } from "./clearAll.js";
 import {
     getUiElements,
     showToast,
@@ -52,6 +53,35 @@ const initOptions = (onRulesChanged) => {
         ui.loadRulesInput.click();
         ui.optionsPopOver.style.display = "none";
     });
+
+    // Clearing everything is destructive, so the first click only arms the link
+    // (mirroring the "Sure?" behavior of the rule delete buttons).
+    let clearArmed = false;
+    const resetClearLink = () => {
+        clearArmed = false;
+        ui.clearAllLink.textContent = "Clear All Rules";
+        ui.clearAllLink.style.color = "";
+        ui.clearAllLink.style.fontWeight = "";
+    };
+
+    ui.clearAllLink.addEventListener("click", async (e) => {
+        e.preventDefault();
+        if (!clearArmed) {
+            clearArmed = true;
+            ui.clearAllLink.textContent = "Sure? Click again";
+            ui.clearAllLink.style.color = "#ff0000";
+            ui.clearAllLink.style.fontWeight = "bold";
+            return;
+        }
+        resetClearLink();
+        const removedKeys = await clearAllRuleData();
+        if (onRulesChanged) {
+            await onRulesChanged();
+        }
+        showToast(removedKeys.length ? "All rules cleared." : "Nothing to clear.");
+    });
+
+    ui.clearAllLink.addEventListener("mouseout", resetClearLink);
 
     ui.loadRulesInput.addEventListener("change", () => {
         const reader = new FileReader();
