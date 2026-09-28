@@ -42,7 +42,7 @@ chrome.action.onClicked.addListener(function() {
         for (let i = 0, len = extensionTabs.length; i < len; i++) {
             if (optionsUrl === extensionTabs[i].url) {
                 found = true;
-                chrome.tabs.update(extensionTabs[i].id, {selected: true});
+                chrome.tabs.update(extensionTabs[i].id, {active: true});
                 break;
             }
         }
