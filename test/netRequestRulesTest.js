@@ -1,7 +1,12 @@
 // Run with: node test/netRequestRulesTest.js
 import "./fakeChrome.js";
 import { resetDnr, getDynamicRules, setRegexRuleLimit, resetRegexRuleLimit } from "./fakeChrome.js";
-import { buildGroupNetRequestRules, setupAllNetRequestRules, countRuleErrors } from "../src/netRequestRules.js";
+import {
+    buildGroupNetRequestRules,
+    setupAllNetRequestRules,
+    countRuleErrors,
+    groupPriorityBase
+} from "../src/netRequestRules.js";
 
 function assertEqual(actual, expected, message) {
     if (actual !== expected) {
@@ -36,6 +41,64 @@ assertEqual(buildGroupNetRequestRules(groups[2]).ruleIds.length, 1, "A disabled 
 // --- a rule already flagged as an error is left out ---
 const errored = buildGroupNetRequestRules(groups[1], { 3: "bad regex" });
 assertEqual(errored.dnrRules.length, 0, "Rules with a known error should not be retried");
+
+// --- groups get priorities that keep the UI order authoritative ---
+// Chrome settles an equal-priority tie by install order, so the order the user sees
+// has to come from the priority. The first group must outrank every later group, and
+// within a group the first rule must outrank the ones after it.
+const first = buildGroupNetRequestRules(groups[0], {}, groupPriorityBase(0, 3)).dnrRules[0];
+const second = buildGroupNetRequestRules(groups[1], {}, groupPriorityBase(1, 3)).dnrRules[0];
+assert(
+    first.priority > second.priority,
+    `The first group should outrank the second (${first.priority} > ${second.priority})`
+);
+
+// Two single-rule groups are what used to tie: same rule count, and the old formula
+// ignored group position entirely. Sharing a base must reproduce that tie, which is
+// why the base has to differ per group.
+const singleA = makeGroup(50, [
+    { id: 500, type: "normalOverride", match: "tie.example/a.js", replace: "x.example/a.js", on: true }
+]);
+const singleB = makeGroup(51, [
+    { id: 510, type: "normalOverride", match: "tie.example/a.js", replace: "y.example/a.js", on: true }
+]);
+const tiedPriority = buildGroupNetRequestRules(singleA, {}, groupPriorityBase(0, 2)).dnrRules[0].priority;
+assertEqual(
+    buildGroupNetRequestRules(singleB, {}, groupPriorityBase(0, 2)).dnrRules[0].priority,
+    tiedPriority,
+    "The same base and rule count produce the same priority"
+);
+assert(
+    buildGroupNetRequestRules(singleA, {}, groupPriorityBase(0, 2)).dnrRules[0].priority >
+    buildGroupNetRequestRules(singleB, {}, groupPriorityBase(1, 2)).dnrRules[0].priority,
+    "Positioned by group, the first group outranks the second"
+);
+
+// Four rules in one group: earlier rules must win over later ones.
+const stacked = [
+    makeGroup(40, [
+        { id: 400, type: "normalOverride", match: "s.com/1.js", replace: "t.com/1.js", on: true },
+        { id: 401, type: "normalOverride", match: "s.com/2.js", replace: "t.com/2.js", on: true },
+        { id: 402, type: "normalOverride", match: "s.com/3.js", replace: "t.com/3.js", on: true }
+    ])
+];
+resetDnr([]);
+await setupAllNetRequestRules(stacked);
+const stackedRules = getDynamicRules();
+assertEqual(stackedRules.length, 3, "All three rules should be applied");
+const byId = Object.fromEntries(stackedRules.map(rule => [rule.id, rule]));
+assert(
+    byId[400].priority > byId[401].priority && byId[401].priority > byId[402].priority,
+    `Earlier rules in a group must outrank later ones (${byId[400].priority}, ${byId[401].priority}, ${byId[402].priority})`
+);
+
+// The gap between groups has to exceed any group's rule count, or a long group could
+// spill into the next group's range.
+const gap = groupPriorityBase(0, 2) - groupPriorityBase(1, 2);
+assert(
+    gap > stackedRules.length,
+    `The gap between groups (${gap}) must exceed a group's rule count (${stackedRules.length})`
+);
 
 // --- applying many groups costs exactly one API call ---
 resetDnr([]);

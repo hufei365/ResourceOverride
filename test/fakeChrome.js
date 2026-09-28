@@ -82,6 +82,7 @@ let regexRuleLimit = REGEX_RULE_LIMIT;
 
 globalThis.chrome.declarativeNetRequest = {
     MAX_NUMBER_OF_REGEX_RULES: REGEX_RULE_LIMIT,
+    MAX_NUMBER_OF_DYNAMIC_RULES: 30000,
     getDynamicRules: async () => dynamicRules.slice(),
     updateDynamicRules: async ({ removeRuleIds = [], addRules = [] } = {}) => {
         const removeSet = new Set(removeRuleIds);

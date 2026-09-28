@@ -82,16 +82,34 @@ const buildDnrRule = (rule, priority) => {
     return null;
 };
 
+// Chrome breaks a tie between two matching rules of equal priority by whichever was
+// installed last, so giving every group the same priority made the winner depend on
+// install order rather than the order shown in the UI. The original webRequest
+// implementation walked the groups and then their rules in order and took the first
+// match, so order is now encoded in the priority: the first group, and the first rule
+// within it, outranks everything after it.
+//
+// The gap only has to be larger than the rule count of any single group, which is
+// bounded by Chrome's ceiling on dynamic rules.
+const groupPriorityGap = () =>
+    (chrome.declarativeNetRequest.MAX_NUMBER_OF_DYNAMIC_RULES || 30000) + 1;
+
+// Priority of the first rule in a group sitting at groupIndex of groupCount groups.
+// Earlier groups get a higher number, and Chrome prefers the highest priority.
+export const groupPriorityBase = (groupIndex = 0, groupCount = 1) =>
+    Math.max(groupCount - groupIndex, 1) * groupPriorityGap();
+
 // Turns one rule group into the dynamic rules it should register. Free of chrome API
-// calls so callers can batch every group into a single round trip.
-export const buildGroupNetRequestRules = (group = {}, ruleErrors = {}) => {
+// calls so callers can batch every group into a single round trip. priorityBase places
+// this group relative to the others; within the group the earlier rule wins.
+export const buildGroupNetRequestRules = (group = {}, ruleErrors = {}, priorityBase = 0) => {
     const rules = group.rules || [];
     const ruleIds = rules.map(rule => rule.id);
     const dnrRules = [];
     if (group.on) {
         rules.forEach((rule, idx) => {
             if (rule.on && !ruleErrors[rule.id]) {
-                const dnrRule = buildDnrRule(rule, 10 + rules.length - idx);
+                const dnrRule = buildDnrRule(rule, priorityBase + rules.length - idx);
                 if (dnrRule) {
                     dnrRules.push(dnrRule);
                 }
@@ -156,9 +174,9 @@ const wholeCallErrorMessage = (error) => {
 // offending rule is flagged and the call retried without it. Resolves to null once
 // the group is applied, or to the rejection error when the failure is not tied to
 // an individual rule - which means retrying cannot help.
-const applyGroupRules = async (group, deletedRuleIds, ruleErrors) => {
+const applyGroupRules = async (group, deletedRuleIds, ruleErrors, priorityBase = 0) => {
     for (;;) {
-        const { ruleIds, dnrRules } = buildGroupNetRequestRules(group, ruleErrors);
+        const { ruleIds, dnrRules } = buildGroupNetRequestRules(group, ruleErrors, priorityBase);
         const ruleIdToRule = {};
         (group.rules || []).forEach(rule => {
             ruleIdToRule[rule.id] = rule;
@@ -182,8 +200,9 @@ const applyGroupRules = async (group, deletedRuleIds, ruleErrors) => {
     }
 };
 
-const setupNetRequestRules = async (group = {}, deletedRuleIds = [], ruleErrors = {}) => {
-    const error = await applyGroupRules(group, deletedRuleIds, ruleErrors);
+const setupNetRequestRules = async (group = {}, deletedRuleIds = [], ruleErrors = {}, position = {}) => {
+    const priorityBase = groupPriorityBase(position.groupIndex, position.groupCount);
+    const error = await applyGroupRules(group, deletedRuleIds, ruleErrors, priorityBase);
     if (error) {
         // The group as a whole was refused. Flag it rather than failing silently.
         flagUnappliedRules(group, ruleErrors, wholeCallErrorMessage(error));
@@ -226,9 +245,10 @@ export const setupAllNetRequestRules = async (groups = [], ruleErrorsByGroup = {
         const removeRuleIds = existingRules.map(rule => rule.id);
         const addRules = [];
         const ruleIdToGroup = {};
-        groups.forEach(group => {
+        groups.forEach((group, index) => {
             const ruleErrors = ruleErrorsByGroup[group.id] || (ruleErrorsByGroup[group.id] = {});
-            const { dnrRules } = buildGroupNetRequestRules(group, ruleErrors);
+            const priorityBase = groupPriorityBase(index, groups.length);
+            const { dnrRules } = buildGroupNetRequestRules(group, ruleErrors, priorityBase);
             (group.rules || []).forEach(rule => {
                 ruleIdToGroup[rule.id] = { group, rule };
             });

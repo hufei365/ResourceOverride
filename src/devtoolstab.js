@@ -27,7 +27,13 @@ const saveRuleGroup = async (group, removedIds = []) => {
     }
     await saveDataAndSync({ ruleGroups });
 
-    const ruleErrors = await setupNetRequestRules(group, removedIds);
+    // The group's position decides its priority relative to the other groups, so a
+    // single-group edit has to be told where the group sits.
+    const position = {
+        groupIndex: ruleGroups.findIndex(rGroup => rGroup.id === group.id),
+        groupCount: ruleGroups.length
+    };
+    const ruleErrors = await setupNetRequestRules(group, removedIds, {}, position);
     allRuleErrors[group.id] = ruleErrors;
 };
 
