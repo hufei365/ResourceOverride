@@ -43,7 +43,7 @@ export const getDomainData = (domain) => {
 
     return {
         id: parseInt(domain.id.substring(1), 10),
-        matchUrl: domain.querySelector(".domainMatchInput").value,
+        name: domain.querySelector(".domainMatchInput").value,
         rules: rules,
         on: domain.querySelector(".onoffswitch-checkbox").checked
     };
@@ -54,7 +54,7 @@ const checkObject = (obj, requiredFields = [], customTests = {}) => {
         const val = obj[requiredField];
         const customTest = customTests[requiredField] || (() => true);
         if (val === undefined || !customTest(val)) {
-            throw new Error("Invalid field: ", requiredField);
+            throw new Error(`Invalid field: ${requiredField}`);
         }
     });
     return true;
@@ -66,9 +66,13 @@ const copyFields = (to, from, fields) => {
     });
 };
 
+// Rule groups used to call this field "matchUrl". Accept both spellings so that
+// imports and previously stored data keep working after the rename to "name".
+const getRuleGroupName = (ruleGroup) => ruleGroup.name !== undefined ? ruleGroup.name : ruleGroup.matchUrl;
+
 const versionedImports = {
     v1: (data, existingRuleGroups = []) => {
-        const ruleGroupFields = ['matchUrl', 'on', 'rules'];
+        const ruleGroupFields = ['on', 'rules'];
         checkObject({ data }, ['data'], {
             data: val => Array.isArray(val) && val.every(group => checkObject(group, ruleGroupFields, {
                 rules: val => Array.isArray(val) && val.every(rule => {
@@ -113,7 +117,7 @@ const versionedImports = {
             });
             ruleGroups.push({
                 id: nextGroupId++,
-                name: ruleGroup.matchUrl,
+                name: getRuleGroupName(ruleGroup) || "",
                 rules,
                 on: ruleGroup.on
             });
@@ -122,7 +126,7 @@ const versionedImports = {
         return saveDataAndSync(dataToStore);
     },
     v2: (data, existingRuleGroups = []) => {
-        const ruleGroupFields = ['id', 'name', 'on', 'rules'];
+        const ruleGroupFields = ['on', 'rules'];
         checkObject({ data }, ['data'], {
             data: val => Array.isArray(val) && val.every(group => checkObject(group, ruleGroupFields, {
                 rules: val => Array.isArray(val) && val.every(rule => {
@@ -167,7 +171,7 @@ const versionedImports = {
             });
             ruleGroups.push({
                 id: nextGroupId++,
-                name: ruleGroup.name,
+                name: getRuleGroupName(ruleGroup) || "",
                 rules,
                 on: ruleGroup.on
             });
@@ -177,26 +181,33 @@ const versionedImports = {
     },
 };
 
-// eslint-disable-next-line no-unused-vars
+// Returns true when the data was imported, false when it was rejected. The caller
+// can use that to know whether it needs to re-render and re-apply the DNR rules.
 export const importData = async (data, version) => {
     const importFunc = versionedImports[`v${version}`];
     if (!importFunc) {
         showToast("Load Failed: Invalid format version.");
+        return false;
+    }
+    if (data === undefined) {
+        showToast("Load Failed: Invalid Resource Override JSON.");
+        return false;
     }
     const existingData = await chrome.storage.local.get({ ruleGroups: [] });
     try {
         await importFunc(data, existingData.ruleGroups);
         showToast("Load Succeeded!");
+        return true;
     } catch (e) {
         console.error(e);
         showToast("Load Failed: Invalid Resource Override JSON.");
+        return false;
     }
 };
 
 export const exportData = async () => {
     const existingData = await chrome.storage.local.get({ ruleGroups: [] });
-    const toExport = { v: 2, ruleGroups: [] };
-    toExport.ruleGroups = await Promise.all(existingData.ruleGroups.map(async ruleGroup => {
+    const data = await Promise.all(existingData.ruleGroups.map(async ruleGroup => {
         const fileIds = {};
         let hasFileRule = false;
         ruleGroup.rules.forEach(rule => {
@@ -209,13 +220,20 @@ export const exportData = async () => {
         if (hasFileRule) {
             files = await chrome.storage.local.get(fileIds);
         }
-        ruleGroup.rules.forEach(rule => {
+        const exportedRules = ruleGroup.rules.map(rule => {
+            const exportedRule = { ...rule };
             if (rule.type === "fileOverride" || rule.type === "fileInject") {
-                rule.file = files[`f${rule.id}`];
+                exportedRule.file = files[`f${rule.id}`];
             }
+            return exportedRule;
         });
-        return ruleGroup;
+        return {
+            id: ruleGroup.id,
+            name: getRuleGroupName(ruleGroup) || "",
+            rules: exportedRules,
+            on: ruleGroup.on
+        };
     }));
 
-    return toExport;
+    return { v: 2, data };
 };

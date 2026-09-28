@@ -36,10 +36,12 @@ async function renderData() {
     const ruleGroups = (await chrome.storage.local.get({ ruleGroups: [] })).ruleGroups;
 
     if (ruleGroups.length) {
-        ruleGroups.forEach(async (group) => {
+        // Render in order: a plain forEach with async callbacks resumes out of order,
+        // so the rules would still be missing when the errors are drawn below.
+        for (const group of ruleGroups) {
             const markup = await createDomainMarkup(group);
             ui.domainDefs.appendChild(markup);
-        });
+        }
     } else {
         const newGroupData = {
             id: 1,
@@ -56,6 +58,45 @@ async function renderData() {
     });
     if (!isSuggestSupported) {
         mainSuggest.setShouldSuggest(false);
+    }
+}
+
+// Re-renders the rule list and re-applies every dynamic declarativeNetRequest rule.
+// Needed after the storage was replaced from the outside, e.g. by an import.
+//
+// Rendering is async, so a second call arriving mid-render would otherwise start
+// another pass on top of the first. Overlapping calls are coalesced instead, with
+// the in-flight promise covering one extra pass when something changed meanwhile.
+let refreshInFlight = null;
+let refreshPending = false;
+
+async function refreshAllRules() {
+    if (refreshInFlight) {
+        // Something changed while a pass was running: request one more pass and let
+        // the in-flight promise cover it.
+        refreshPending = true;
+        return refreshInFlight;
+    }
+    refreshInFlight = (async () => {
+        do {
+            refreshPending = false;
+            await renderData();
+            allRuleErrors = {};
+
+            const ruleGroups = (await chrome.storage.local.get({ ruleGroups: [] })).ruleGroups;
+            const ruleErrorsPairedWithGroup = await Promise.all(ruleGroups.map(
+                (group) => setupNetRequestRules(group).then(ruleErrors => ({ group, ruleErrors }))
+            ));
+            ruleErrorsPairedWithGroup.forEach(ruleErrorWithGroup => {
+                allRuleErrors[ruleErrorWithGroup.group.id] = ruleErrorWithGroup.ruleErrors;
+                renderErrors();
+            });
+        } while (refreshPending);
+    })();
+    try {
+        await refreshInFlight;
+    } finally {
+        refreshInFlight = null;
     }
 }
 
@@ -81,7 +122,7 @@ async function init() {
     responseHeadersSuggest.init();
     requestHeadersSuggest.fillOptions(requestHeaders);
     responseHeadersSuggest.fillOptions(responseHeaders);
-    initOptions();
+    initOptions(refreshAllRules);
     updateOptions();
 
     ui.addDomainBtn.addEventListener("click", async () => {
@@ -123,7 +164,7 @@ async function init() {
 
     const messageActions = {
         sync: () => {
-            renderData();
+            refreshAllRules();
         },
     };
 
@@ -174,17 +215,7 @@ async function init() {
         });
     }
 
-    await renderData();
-    allRuleErrors = {};
-
-    const ruleGroups = (await chrome.storage.local.get({ ruleGroups: [] })).ruleGroups;
-    const ruleErrorsPairedWithGroup = await Promise.all(ruleGroups.map(
-        (group) => setupNetRequestRules(group).then(ruleErrors => ({ group, ruleErrors }))
-    ));
-    ruleErrorsPairedWithGroup.forEach(ruleErrorWithGroup => {
-        allRuleErrors[ruleErrorWithGroup.group.id] = ruleErrorWithGroup.ruleErrors;
-        renderErrors();
-    });
+    await refreshAllRules();
 }
 
 init();

@@ -106,7 +106,8 @@ export const createDomainMarkup = async (savedData) => {
     const mvRules = moveableRules(overrideRulesContainer, ".handle");
     mvRules.onMove(saveFunc);
 
-    domainMatchInput.value = savedData.name || "";
+    // "matchUrl" is the legacy field name; fall back to it for groups saved by older builds.
+    domainMatchInput.value = savedData.name || savedData.matchUrl || "";
     onOffBtn.checked = savedData.on === false ? false : true;
 
     if (savedData.on === false) {

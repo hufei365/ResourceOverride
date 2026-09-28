@@ -11,7 +11,9 @@ export const updateOptions = async () => {
     document.getElementById("showDevTools").checked = options.optionDevTools;
 };
 
-const initOptions = () => {
+// onRulesChanged is called after the stored rules were replaced from the outside
+// (import or clear all), so the caller can re-render and re-apply the DNR rules.
+const initOptions = (onRulesChanged) => {
     const ui = getUiElements(document);
 
     window.addEventListener("click", (e) => {
@@ -32,9 +34,9 @@ const initOptions = () => {
         });
     });
 
-    ui.saveRulesLink.addEventListener("click", (e) => {
+    ui.saveRulesLink.addEventListener("click", async (e) => {
         e.preventDefault();
-        const data = exportData();
+        const data = await exportData();
         const json = JSON.stringify(data);
         const blob = new Blob([json], {type: "text/plain"});
         const downloadLink = document.createElement("a");
@@ -53,13 +55,20 @@ const initOptions = () => {
 
     ui.loadRulesInput.addEventListener("change", () => {
         const reader = new FileReader();
-        reader.onload = function() {
+        reader.onload = async function() {
             const text = reader.result;
+            let importedObj;
             try {
-                const importedObj = JSON.parse(text);
-                importData(importedObj.data, importedObj.v);
+                importedObj = JSON.parse(text);
             } catch (e) {
                 showToast("Load Failed: Invalid JSON in file.");
+                return;
+            }
+            // "data" is the historical key; older v1 exports also used it.
+            const importedData = importedObj.data !== undefined ? importedObj.data : importedObj.ruleGroups;
+            const imported = await importData(importedData, importedObj.v);
+            if (imported && onRulesChanged) {
+                await onRulesChanged();
             }
         };
         reader.readAsText(ui.loadRulesInput.files[0]);
