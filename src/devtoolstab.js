@@ -7,7 +7,7 @@ import {
     saveDataAndSync
 } from "./util.js";
 import { mainSuggest, requestHeadersSuggest, responseHeadersSuggest } from "./suggest.js";
-import setupNetRequestRules from "./netRequestRules.js";
+import setupNetRequestRules, { setupAllNetRequestRules } from "./netRequestRules.js";
 import { requestHeaders, responseHeaders } from "./headers.js";
 import { tabGroupsInit, createDomainMarkup } from "./tabGroup.js";
 import initOptions, { updateOptions } from "./options.js";
@@ -31,16 +31,19 @@ const saveRuleGroup = async (group, removedIds = []) => {
     allRuleErrors[group.id] = ruleErrors;
 };
 
+// Draws every stored rule group and returns the groups it rendered, so the
+// caller does not have to read storage a second time.
 async function renderData() {
-    ui.domainDefs.innerHTML = "";
     const ruleGroups = (await chrome.storage.local.get({ ruleGroups: [] })).ruleGroups;
+    // Build off-document and insert the whole list in one mutation. Appending
+    // each group on its own forced a layout per group.
+    const fragment = document.createDocumentFragment();
 
     if (ruleGroups.length) {
-        // Render in order: a plain forEach with async callbacks resumes out of order,
-        // so the rules would still be missing when the errors are drawn below.
+        // Render in order: a plain forEach with async callbacks resumes out of order.
         for (const group of ruleGroups) {
             const markup = await createDomainMarkup(group);
-            ui.domainDefs.appendChild(markup);
+            fragment.appendChild(markup);
         }
     } else {
         const newGroupData = {
@@ -50,15 +53,22 @@ async function renderData() {
             on: true,
         };
         const newGroup = await createDomainMarkup(newGroupData);
-        ui.domainDefs.appendChild(newGroup);
-        saveRuleGroup(newGroupData);
+        fragment.appendChild(newGroup);
+        await saveRuleGroup(newGroupData);
+        ruleGroups.push(newGroupData);
     }
+
+    ui.domainDefs.innerHTML = "";
+    ui.domainDefs.appendChild(fragment);
+
     const isSuggestSupported = getTabResources((res) => {
         mainSuggest.fillOptions(res);
     });
     if (!isSuggestSupported) {
         mainSuggest.setShouldSuggest(false);
     }
+
+    return ruleGroups;
 }
 
 // Re-renders the rule list and re-applies every dynamic declarativeNetRequest rule.
@@ -80,17 +90,11 @@ async function refreshAllRules() {
     refreshInFlight = (async () => {
         do {
             refreshPending = false;
-            await renderData();
-            allRuleErrors = {};
-
-            const ruleGroups = (await chrome.storage.local.get({ ruleGroups: [] })).ruleGroups;
-            const ruleErrorsPairedWithGroup = await Promise.all(ruleGroups.map(
-                (group) => setupNetRequestRules(group).then(ruleErrors => ({ group, ruleErrors }))
-            ));
-            ruleErrorsPairedWithGroup.forEach(ruleErrorWithGroup => {
-                allRuleErrors[ruleErrorWithGroup.group.id] = ruleErrorWithGroup.ruleErrors;
-                renderErrors();
-            });
+            // renderData returns the groups it just drew, so no second storage read.
+            const ruleGroups = await renderData();
+            // One batched API call for every group instead of one call per group.
+            allRuleErrors = await setupAllNetRequestRules(ruleGroups);
+            renderErrors();
         } while (refreshPending);
     })();
     try {
@@ -108,9 +112,13 @@ const renderErrors = () => {
     Object.keys(allRuleErrors).forEach((groupId) => {
         const groupRuleErrors = allRuleErrors[groupId];
         Object.keys(groupRuleErrors).forEach((key) => {
-            const rule = document.querySelector(`#r${key}`);
-            rule.classList.add("error");
-            rule.title = groupRuleErrors[key];
+            // A rule can be flagged and then removed before the next render, so the
+            // element may no longer exist.
+            const rule = document.getElementById(`r${key}`);
+            if (rule) {
+                rule.classList.add("error");
+                rule.title = groupRuleErrors[key];
+            }
         });
     });
 };
