@@ -85,7 +85,10 @@ async function refreshAllRules() {
         // Something changed while a pass was running: request one more pass and let
         // the in-flight promise cover it.
         refreshPending = true;
-        return refreshInFlight;
+        await refreshInFlight;
+        // The in-flight pass resolved with the errors it had collected; once it has
+        // settled allRuleErrors holds the final set for the caller.
+        return allRuleErrors;
     }
     refreshInFlight = (async () => {
         do {
@@ -102,6 +105,8 @@ async function refreshAllRules() {
     } finally {
         refreshInFlight = null;
     }
+    // Returned so callers can report how many rules Chrome refused to register.
+    return allRuleErrors;
 }
 
 const renderErrors = () => {

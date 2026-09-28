@@ -1,5 +1,6 @@
 import { exportData, importData } from "./importExport.js";
 import { clearAllRuleData } from "./clearAll.js";
+import { countRuleErrors } from "./netRequestRules.js";
 import {
     getUiElements,
     showToast,
@@ -109,7 +110,13 @@ const initOptions = (onRulesChanged) => {
             try {
                 const imported = await importData(importedData, importedObj.v);
                 if (imported && onRulesChanged) {
-                    await onRulesChanged();
+                    const ruleErrors = await onRulesChanged();
+                    // Chrome refuses rule sets larger than its regex rule ceiling. Say
+                    // so instead of leaving the user with a cheerful success message.
+                    const rejected = countRuleErrors(ruleErrors);
+                    if (rejected) {
+                        showToast(`${rejected} rule(s) were not applied. Hover the highlighted rules for details.`);
+                    }
                 }
             } finally {
                 hideLoading();

@@ -1,7 +1,7 @@
 // Run with: node test/netRequestRulesTest.js
 import "./fakeChrome.js";
-import { resetDnr, getDynamicRules } from "./fakeChrome.js";
-import { buildGroupNetRequestRules, setupAllNetRequestRules } from "../src/netRequestRules.js";
+import { resetDnr, getDynamicRules, setRegexRuleLimit, resetRegexRuleLimit } from "./fakeChrome.js";
+import { buildGroupNetRequestRules, setupAllNetRequestRules, countRuleErrors } from "../src/netRequestRules.js";
 
 function assertEqual(actual, expected, message) {
     if (actual !== expected) {
@@ -97,6 +97,81 @@ const healthyGroupErrors = retryErrors[9] || {};
 assertEqual(Object.keys(healthyGroupErrors).length, 0, "The healthy group should have no errors");
 assertEqual(getDynamicRules().length, 1, "The healthy rule should still be applied");
 assertEqual(getDynamicRules()[0].id, 90, "The surviving rule should be the healthy one");
+
+// --- a rule set past Chrome's regex ceiling degrades instead of applying nothing ---
+// Batching is atomic, so an oversized rule set used to be rejected whole: the user
+// was left with zero rules and no explanation. It should now apply what fits and
+// flag the rest.
+const oversizedGroups = [
+    makeGroup(20, [
+        { id: 200, type: "normalOverride", match: "a.com/1.js", replace: "b.com/1.js", on: true },
+        { id: 201, type: "normalOverride", match: "a.com/2.js", replace: "b.com/2.js", on: true }
+    ]),
+    makeGroup(21, [
+        { id: 210, type: "normalOverride", match: "a.com/3.js", replace: "b.com/3.js", on: true },
+        { id: 211, type: "normalOverride", match: "a.com/4.js", replace: "b.com/4.js", on: true }
+    ]),
+    makeGroup(22, [
+        { id: 220, type: "normalOverride", match: "a.com/5.js", replace: "b.com/5.js", on: true }
+    ])
+];
+
+resetDnr([]);
+setRegexRuleLimit(2);
+console.error = () => {};
+let oversizedErrors;
+try {
+    oversizedErrors = await setupAllNetRequestRules(oversizedGroups);
+} finally {
+    console.error = realConsoleError;
+    resetRegexRuleLimit();
+}
+
+assertEqual(getDynamicRules().length, 2, "The rules that fit within the ceiling should be applied");
+assertEqual(
+    getDynamicRules().map(rule => rule.id).join(","),
+    "200,201",
+    "The first group should be the one that fits"
+);
+assertEqual(oversizedErrors[20] && Object.keys(oversizedErrors[20]).length, 0, "The group that fits gets no errors");
+assert(
+    oversizedErrors[21] && oversizedErrors[21][210] && oversizedErrors[21][211],
+    "Rules refused by the ceiling should be flagged"
+);
+assert(
+    oversizedErrors[22] && oversizedErrors[22][220],
+    "Groups after the ceiling is hit should be flagged without another attempt"
+);
+assert(
+    (/1000|regex rules/i).test(oversizedErrors[21][210]),
+    "The flag should explain the ceiling, not echo a terse API error"
+);
+assertEqual(countRuleErrors(oversizedErrors), 3, "countRuleErrors should total the refused rules");
+assertEqual(countRuleErrors(retryErrors), 1, "countRuleErrors should count genuine rule errors too");
+assertEqual(countRuleErrors({}), 0, "countRuleErrors of nothing is zero");
+
+// --- a rule switched off is not blamed for the ceiling ---
+const withDisabledGroup = [
+    makeGroup(30, [{ id: 300, type: "normalOverride", match: "a.com/6.js", replace: "b.com/6.js", on: true }]),
+    makeGroup(31, [{ id: 310, type: "normalOverride", match: "a.com/7.js", replace: "b.com/7.js", on: false }])
+];
+resetDnr([]);
+setRegexRuleLimit(0);
+try {
+    console.error = () => {};
+    const disabledErrors = await setupAllNetRequestRules(withDisabledGroup);
+    assert(
+        !(disabledErrors[31] && disabledErrors[31][310]),
+        "A disabled rule was never going to register, so it should not be flagged"
+    );
+    assert(
+        disabledErrors[30] && disabledErrors[30][300],
+        "The enabled rule that could not register should be flagged"
+    );
+} finally {
+    console.error = realConsoleError;
+    resetRegexRuleLimit();
+}
 
 function assert(condition, message) {
     if (!condition) {

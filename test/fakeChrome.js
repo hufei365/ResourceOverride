@@ -75,15 +75,26 @@ globalThis.__updateDynamicRulesCalls = 0;
 
 let dynamicRules = [];
 
+// Mirrors the real ceiling. Chrome refuses a call that would push the number of
+// dynamic regex rules past this, and rejects the whole call rather than part of it.
+const REGEX_RULE_LIMIT = 1000;
+let regexRuleLimit = REGEX_RULE_LIMIT;
+
 globalThis.chrome.declarativeNetRequest = {
+    MAX_NUMBER_OF_REGEX_RULES: REGEX_RULE_LIMIT,
     getDynamicRules: async () => dynamicRules.slice(),
     updateDynamicRules: async ({ removeRuleIds = [], addRules = [] } = {}) => {
+        const removeSet = new Set(removeRuleIds);
+        const remaining = dynamicRules.filter(rule => !removeSet.has(rule.id));
+        // The ceiling is checked before the call is applied, so a rejected call
+        // leaves the previous rules untouched.
+        if (remaining.length + addRules.length > regexRuleLimit) {
+            throw new Error("Dynamic rule count for regex rules exceeded.");
+        }
         globalThis.__updateDynamicRulesCalls++;
         globalThis.__removedDnrRuleIds.push(...removeRuleIds);
         globalThis.__addedDnrRules.push(...addRules);
-        const removeSet = new Set(removeRuleIds);
-        dynamicRules = dynamicRules.filter(rule => !removeSet.has(rule.id));
-        dynamicRules.push(...addRules);
+        dynamicRules = remaining.concat(addRules);
         return undefined;
     }
 };
@@ -93,6 +104,15 @@ export const resetDnr = (rules = []) => {
     globalThis.__removedDnrRuleIds = [];
     globalThis.__addedDnrRules = [];
     globalThis.__updateDynamicRulesCalls = 0;
+};
+
+// Lowers the simulated ceiling so the oversized-rule-set path can be exercised.
+export const setRegexRuleLimit = (limit) => {
+    regexRuleLimit = limit;
+};
+
+export const resetRegexRuleLimit = () => {
+    regexRuleLimit = REGEX_RULE_LIMIT;
 };
 
 export const getDynamicRules = () => dynamicRules.slice();
